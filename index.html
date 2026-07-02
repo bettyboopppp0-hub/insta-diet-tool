@@ -354,6 +354,24 @@ async function gemini(prompt, asJson=false){
   if(!text) throw new Error('応答が空でした。もう一度お試しください。');
   return text;
 }
+// Gemini 画像生成（Nano Banana・無料枠あり）
+async function geminiImage(prompt){
+  const key = (apiKey.value||LS.k).trim();
+  if(!key) throw new Error('APIキーが未設定です。上の「はじめに」で登録してください。');
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${encodeURIComponent(key)}`;
+  const res = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});
+  if(!res.ok){
+    let msg=`画像生成エラー ${res.status}`;
+    try{ const e=await res.json(); msg+=`：${e.error?.message||''}`; }catch(_){}
+    if(res.status===429) msg+='（画像生成の無料枠上限かも。少し待ってから再試行してください）';
+    throw new Error(msg);
+  }
+  const data = await res.json();
+  const part = data?.candidates?.[0]?.content?.parts?.find(p=>p.inlineData);
+  if(!part) throw new Error('画像が生成されませんでした。プロンプトを少し変えてお試しください');
+  return 'data:'+(part.inlineData.mimeType||'image/png')+';base64,'+part.inlineData.data;
+}
 async function testKey(){
   keyMsg.innerHTML='<span class="muted">接続中...</span>';
   try{ await gemini('「準備OK」とだけ返してください。'); keyMsg.innerHTML='<span class="ok">✓ 接続成功！使えます。</span>'; }
@@ -487,7 +505,7 @@ ${HOOK_RULES}
 本文は画像に載るので1行は短く端的に。きれいごと・一般論は入れない。日本語。
 JSONで {
  "slides":[{"title":"見出し","body":["行1","行2"]}],
- "cover_image_prompt":"表紙背景のAI画像生成プロンプト(英語・文字は入れない・写真風・明るく清潔感・産後ダイエット/ヘルシーな食事/宅トレ/ママの暮らしの雰囲気)",
+ "cover_image_prompt":"表紙背景のAI画像生成プロンプト(日本語・文字は入れない・写真風・明るく清潔感・産後ダイエット/ヘルシーな食事/宅トレ/ママの暮らしの雰囲気)",
  "caption":"投稿用キャプション(短め＋保存/コメント誘導のCTA)"
 } を返す。slidesは必ず5要素。JSONのみ。`;
     const data = JSON.parse(await gemini(prompt,true));
@@ -574,12 +592,14 @@ async function renderCover(ctx,w,h,s,th){
   } else if(coverBg.value==='ai'){
     try{
       if(!coverImgCache){
-        const p=encodeURIComponent(imgPrompt.value||'clean bright modern background');
-        coverImgCache=await loadImg(`https://image.pollinations.ai/prompt/${p}?width=${w}&height=${h}&nologo=true&seed=${Math.floor(Math.random()*99999)}`);
+        imgNote.textContent='AI背景を生成中...（10〜30秒かかることがあります）';
+        const p=(imgPrompt.value||'明るく清潔感のある背景写真').trim();
+        const src=await geminiImage(p+`\n※${h>w?'縦長':'正方形'}の写真。画像内に文字・ロゴ・透かしは入れない。`);
+        coverImgCache=await loadImg(src);
       }
       drawCover(ctx,coverImgCache,w,h);
-      imgNote.textContent='表紙AI背景: Pollinations（無料）';
-    }catch(e){ gradient(ctx,w,h); imgNote.textContent='AI取得に失敗→グラデで代替'; }
+      imgNote.textContent='表紙AI背景: Gemini AI生成（無料枠）';
+    }catch(e){ gradient(ctx,w,h); imgNote.textContent='AI生成に失敗→グラデで代替（'+e.message+'）'; }
   } else gradient(ctx,w,h);
   ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(0,0,w,h);
   ctx.textAlign='center'; ctx.fillStyle='#fff';
